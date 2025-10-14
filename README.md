@@ -54,7 +54,7 @@ DEPLOYMENT_TIMEOUT=180
    - Required scopes: `repo`, `workflow`, `admin:repo_hook`
 3. **GITHUB_USERNAME**: Your GitHub username (e.g., `john-doe`)
 
-## 🏠 Local Installation
+##  Local Installation
 
 ### Step 1: Clone the Repository
 
