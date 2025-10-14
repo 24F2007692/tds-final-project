@@ -1,5 +1,5 @@
 # ==============================================================================
-# TDS AI: LLM Code Deployment Project - FIXED (GitHub Pages enabled)
+# TDS AI: LLM Code Deployment Project
 # ==============================================================================
 import os
 import time
@@ -376,3 +376,4 @@ def handle_build_request(request_data: BuildRequest, background_tasks: Backgroun
     background_tasks.add_task(run_build_and_deploy_task, request_data)
 
     return {"status": "accepted", "message": "The build and deploy process has been started in the background."}
+
