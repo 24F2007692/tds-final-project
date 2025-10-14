@@ -1,8 +1,8 @@
-# TDS AI: LLM-Powered Code Deployment Agent 🚀
+# TDS AI: LLM-Powered Code Deployment Agent 
 
 An intelligent FastAPI-based service that automatically generates HTML web applications from natural language briefs using LLM and deploys them to GitHub Pages. Perfect for rapid prototyping and automated web development!
 
-## 🌟 Features
+##  Features
 
 - **AI-Powered Code Generation**: Converts natural language briefs into production-ready HTML code using GPT-4
 - **Automatic GitHub Deployment**: Creates repositories and deploys to GitHub Pages automatically
@@ -11,7 +11,7 @@ An intelligent FastAPI-based service that automatically generates HTML web appli
 - **Technical Requirements Validation**: Ensures generated code meets specific JavaScript evaluation criteria
 - **Background Processing**: Asynchronous task execution for better performance
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [Prerequisites](#prerequisites)
 - [Environment Setup](#environment-setup)
@@ -21,7 +21,7 @@ An intelligent FastAPI-based service that automatically generates HTML web appli
 - [Example Usage](#example-usage)
 - [Troubleshooting](#troubleshooting)
 
-## 🔧 Prerequisites
+##  Prerequisites
 
 Before running this project, ensure you have:
 
@@ -30,7 +30,7 @@ Before running this project, ensure you have:
 - AIPIPE API token (for LLM access)
 - Git installed on your system
 
-## 🔐 Environment Setup
+##  Environment Setup
 
 Create a `.env` file in the project root with the following variables:
 
@@ -96,7 +96,7 @@ Your API will be available at: `http://localhost:8000`
 
 Access interactive API docs at: `http://localhost:8000/docs`
 
-## ☁️ Using via Hugging Face
+##  Using via Hugging Face
 
 The service is deployed on Hugging Face Spaces and can be accessed directly via API calls.
 
@@ -145,7 +145,7 @@ response = requests.post(url, json=payload)
 print(response.json())
 ```
 
-## 📚 API Documentation
+##  API Documentation
 
 ### Endpoint: `/api/build`
 
@@ -203,7 +203,7 @@ Once deployment is complete, the service sends a POST request to your `evaluatio
 }
 ```
 
-## 🎯 Example Usage
+##  Example Usage
 
 ### Example 1: Create a Simple Landing Page
 
@@ -268,7 +268,7 @@ response = requests.post("http://localhost:8000/api/build", json=payload)
 print(response.json())
 ```
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Common Issues
 
@@ -296,7 +296,7 @@ Check application logs for detailed error messages:
 # Check logs in Space settings → Logs tab
 ```
 
-## 🏗️ Project Structure
+##  Project Structure
 
 ```
 tds-ai-deployment/
@@ -307,24 +307,24 @@ tds-ai-deployment/
 └── .gitignore          # Git ignore rules
 ```
 
-## 📝 License
+##  License
 
 MIT License - Feel free to use this project for learning and development!
 
-## 🤝 Contributing
+##  Contributing
 
 Contributions are welcome! Feel free to:
 - Report bugs
 - Suggest features
 - Submit pull requests
 
-## 📧 Support
+##  Support
 
 For issues and questions:
 - Create an issue on GitHub
 - Email: 24f2007692@ds.study.iitm.ac.in
 
-## 🎓 Credits
+## Credits
 
 Developed as part of the TDS (Tools in Data Science) course project at IIT Madras BS Degree in Data Science.
 
