@@ -1,5 +1,3 @@
-Yaar, bahut solid project hai! Let me create a comprehensive README for your TDS AI project. Here's the complete README.md:
-
 # TDS AI: LLM-Powered Code Deployment Agent 🚀
 
 An intelligent FastAPI-based service that automatically generates HTML web applications from natural language briefs using LLM and deploys them to GitHub Pages. Perfect for rapid prototyping and automated web development!
