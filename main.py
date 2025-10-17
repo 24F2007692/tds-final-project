@@ -64,73 +64,146 @@ def sanitize_filename(filename: str) -> str:
 def generate_code_from_brief(request_data: BuildRequest, existing_code: str = None) -> Tuple[str, Dict[str, bytes]]:
     if not config.AIPIPE_TOKEN:
         raise HTTPException(status_code=503, detail="Server configuration error: AIPIPE_TOKEN is not set.")
-    client = OpenAI(base_url="https://aipipe.org/openrouter/v1", api_key=config.AIPIPE_TOKEN)
 
+    client = OpenAI(base_url="https://aipipe.org/openrouter/v1", api_key=config.AIPIPE_TOKEN)
     attachments_content = ""
     binary_files_to_commit: Dict[str, bytes] = {}
+
+    # === Attachment handling ===
     if request_data.attachments:
         for attachment in request_data.attachments:
             try:
-                header, encoded = attachment.url.split(",", 1)
-                mime_type = header.split(';')[0].split(':')[1]
-                decoded_bytes = base64.b64decode(encoded)
+                # --- NEW: Supports both Base64 data URLs and direct HTTP URLs ---
+                if attachment.url.startswith("data:"):
+                    # Handle Base64 encoded data
+                    header, encoded = attachment.url.split(",", 1)
+                    mime_type = header.split(";")[0].split(":")[1]
+                    decoded_bytes = base64.b64decode(encoded)
+                elif attachment.url.startswith("http"):
+                    # Handle downloadable files
+                    print(f"Downloading attachment from URL: {attachment.url}")
+                    response = requests.get(attachment.url, timeout=30)
+                    response.raise_for_status()
+                    decoded_bytes = response.content
+                    mime_type = response.headers.get("Content-Type", "application/octet-stream")
+                else:
+                    print(f"Unsupported attachment URL format: {attachment.url}")
+                    continue
 
+                # Size limit guard
                 if len(decoded_bytes) > config.MAX_ATTACHMENT_SIZE:
                     print(f"Attachment {attachment.name} too large. Skipping.")
                     continue
 
-                if mime_type.startswith("text/") or mime_type in ("application/json", "application/javascript"):
+                # Handle image attachments
+                if mime_type.startswith("image/"):
+                    safe_filename = sanitize_filename(attachment.name)
+                    binary_files_to_commit[safe_filename] = decoded_bytes
+
+                    attachments_content += f"\n\n--- Attachment: `{safe_filename}` (Image file) ---\n"
+                    attachments_content += f"Original URL: {attachment.url}\n"
+                    attachments_content += (
+                        "IMPORTANT: Use this URL as the default/fallback image in your generated code.\n"
+                    )
+
+                # Handle text-like attachments
+                elif mime_type.startswith("text/") or mime_type in (
+                    "application/json",
+                    "application/javascript",
+                ):
                     try:
-                        attachments_content += f"\n\n--- Attachment: `{attachment.name}` ---\n```\n{decoded_bytes.decode('utf-8')}\n```"
+                        attachments_content += (
+                            f"\n\n--- Attachment: `{attachment.name}` ---\n```\n"
+                            f"{decoded_bytes.decode('utf-8', errors='ignore')}\n```"
+                        )
                     except Exception:
-                        attachments_content += f"\n\n--- Attachment: `{attachment.name}` (text but decode failed) ---"
+                        attachments_content += (
+                            f"\n\n--- Attachment: `{attachment.name}` (text decode failed) ---"
+                        )
+
+                # Handle other binary files
                 else:
                     safe_filename = sanitize_filename(attachment.name)
                     binary_files_to_commit[safe_filename] = decoded_bytes
-                    attachments_content += f"\n\n--- Attachment: `{safe_filename}` (Binary file saved to repo as `{safe_filename}.b64`) ---"
+                    attachments_content += (
+                        f"\n\n--- Attachment: `{safe_filename}` (Binary file saved to repo) ---"
+                    )
+
             except Exception as e:
                 print(f"Warning: Could not process attachment '{attachment.name}'. Error: {e}")
+                traceback.print_exc()
 
+    # === Build technical requirement text ===
     technical_requirements = ""
     if request_data.checks:
         technical_requirements += "\n\n**Technical Implementation Requirements (CRITICAL):**\n"
         for i, check in enumerate(request_data.checks):
             technical_requirements += f"{i+1}. The generated webpage MUST pass this JavaScript evaluation: `{check}`\n"
 
-    action = "modify an existing HTML file" if existing_code else "create a new, self-contained `index.html` file"
-    existing_code_section = f"**EXISTING CODE:**\n```html\n{existing_code}\n```" if existing_code else ""
-
-    prompt_template = """
-    You are an elite software engineer. Your task is to {action}.
-    Analyze the user's brief, attachments, and technical requirements.
-    Your output must be ONLY the complete, final, raw HTML code, starting with `<!DOCTYPE html>`.
-    Do not include any explanations, comments, or markdown. For external libraries, use public CDNs.
-    All technical requirements are mandatory.
-
-    {existing_code_section}
-    **USER'S BRIEF:** "{brief}"
-    {attachments}
-    {tech_reqs}
-    """
-
-    final_prompt = prompt_template.format(
-        action=action, existing_code_section=existing_code_section,
-        brief=request_data.brief, attachments=attachments_content, tech_reqs=technical_requirements
+    # === Define generation action ===
+    action = (
+        "modify an existing HTML file"
+        if existing_code
+        else "create a new, self-contained `index.html` file"
+    )
+    existing_code_section = (
+        f"**EXISTING CODE:**\n```html\n{existing_code}\n```" if existing_code else ""
     )
 
+    # === Final prompt template ===
+    prompt_template = """
+You are an elite software engineer. Your task is to {action}.
+
+Analyze the user's brief, attachments, and technical requirements.
+
+Your output must be ONLY the complete, final, raw HTML code, starting with `<!DOCTYPE html>`.
+Do not include any explanations, comments, or markdown. For external libraries, use public CDNs.
+
+All technical requirements are mandatory.
+
+{existing_code_section}
+
+**USER'S BRIEF:** "{brief}"
+
+{attachments}
+
+**CRITICAL INSTRUCTIONS FOR ATTACHMENTS:**
+- If image attachments are provided with URLs, use those EXACT URLs as the default/fallback image source
+- For captcha solvers: The page MUST support ?url=... parameter to load custom images
+- If no ?url parameter is provided, use the attachment URL as default
+- Ensure CORS handling for cross-origin images (use crossOrigin="anonymous")
+- Use modern CDN libraries (e.g., Tesseract.js v4 from cdn.jsdelivr.net)
+
+{tech_reqs}
+"""
+
+    final_prompt = prompt_template.format(
+        action=action,
+        existing_code_section=existing_code_section,
+        brief=request_data.brief,
+        attachments=attachments_content,
+        tech_reqs=technical_requirements,
+    )
+
+    # === LLM call ===
     try:
         completion = client.chat.completions.create(
-            model=config.LLM_MODEL, messages=[{"role": "user", "content": final_prompt}],
-            temperature=0.1, timeout=120.0,
+            model=config.LLM_MODEL,
+            messages=[{"role": "user", "content": final_prompt}],
+            temperature=0.1,
+            timeout=120.0,
         )
         generated_code = completion.choices[0].message.content.strip()
 
+        # Remove markdown wrappers if any
         if generated_code.startswith("```html"):
             generated_code = generated_code.split("```html", 1)[1].rsplit("```", 1)[0]
 
         return generated_code.strip(), binary_files_to_commit
+
     except Exception as e:
         raise HTTPException(status_code=504, detail=f"LLM API call failed or timed out: {e}")
+
 
 # === GitHub helpers ===
 def get_existing_file(repo, file_path):
@@ -395,3 +468,8 @@ def handle_build_request(request_data: BuildRequest, background_tasks: Backgroun
     background_tasks.add_task(run_build_and_deploy_task, request_data)
 
     return {"status": "accepted", "message": "The build and deploy process has been started in the background."}
+
+
+@app.get("/")
+async def root():
+    return {"message": "Task Receiver Service is running. Post to /api/build to submit a task."}
