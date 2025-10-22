@@ -61,7 +61,7 @@ def sanitize_filename(filename: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_.-]', '_', sanitized)
 
 # === LLM / attachment handling ===
-def generate_code_from_brief(request_data: BuildRequest, existing_code: str = None) -> Tuple[str, Dict[str, bytes]]:
+def generate_code_from_brief(request_data: BuildRequest, existing_code: str = None) -> Tuple[Dict[str, str], Dict[str, bytes]]:
     if not config.AIPIPE_TOKEN:
         raise HTTPException(status_code=503, detail="Server configuration error: AIPIPE_TOKEN is not set.")
 
@@ -156,14 +156,16 @@ def generate_code_from_brief(request_data: BuildRequest, existing_code: str = No
 
     # === Final prompt template ===
     prompt_template = """
-You are an elite software engineer. Your task is to {action}.
+You are an elite software engineer. Your task is to generate the complete content for all files requested in the user's brief.
 
 Analyze the user's brief, attachments, and technical requirements.
 
-Your output must be ONLY the complete, final, raw HTML code, starting with <!DOCTYPE html>.
-Do not include any explanations, comments, or markdown. For external libraries, use public CDNs.
+Your output MUST be a single, valid JSON object.
+The keys of the JSON object must be the full filenames (e.g., "index.html", "data.json", "style.css").
+The values must be the complete, raw string content for each file.
 
-All technical requirements are mandatory.
+Do not include any explanations, comments, or markdown outside of the final JSON object.
+For external libraries in HTML, use public CDNs.
 
 {existing_code_section}
 
@@ -179,6 +181,11 @@ All technical requirements are mandatory.
 - Use modern CDN libraries (e.g., Tesseract.js v4 from cdn.jsdelivr.net)
 - **For text attachments (CSV, JSON, Markdown)**: Fetch from relative path (e.g., fetch("data.csv")) unless ?url= parameter is provided
 - If ?url= parameter is present, fetch from that URL; otherwise fetch from the local file in the repo root
+
+**CRITICAL INSTRUCTIONS FOR FILE GENERATION:**
+- Generate ALL files requested in the brief, including .txt, .json, .md, .svg, and .html.
+- The 'index.html' file should link to all other files you generate.
+- DO NOT generate a 'README.md' or 'LICENSE' file. They will be added automatically.
 
 {tech_reqs}
 """
@@ -198,17 +205,26 @@ All technical requirements are mandatory.
             messages=[{"role": "user", "content": final_prompt}],
             temperature=0.1,
             timeout=120.0,
+            # IMPORTANT: Request JSON output
+            response_format={"type": "json_object"},
         )
-        generated_code = completion.choices[0].message.content.strip()
+        generated_content = completion.choices[0].message.content.strip()
 
         # Remove markdown wrappers if any
-        if generated_code.startswith("```html"):
-            generated_code = generated_code.split("```html", 1)[1].rsplit("```", 1)[0]
+        if generated_content.startswith("```json"):
+            generated_content = generated_content.split("```json", 1)[1].rsplit("```", 1)[0]
+        
+        # Parse the JSON string into a Python dictionary
+        import json
+        generated_files_dict = json.loads(generated_content)
 
-        return generated_code.strip(), binary_files_to_commit
+        # Return the dictionary of files AND the binary attachments
+        return generated_files_dict, binary_files_to_commit
 
     except Exception as e:
-        raise HTTPException(status_code=504, detail=f"LLM API call failed or timed out: {e}")
+        print(f"LLM API call or JSON parsing failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=504, detail=f"LLM API call or JSON parsing failed: {e}")
 
 
 # === GitHub helpers ===
@@ -297,7 +313,7 @@ def create_or_update_file(repo, file_path: str, commit_message: str, content: st
         repo.create_file(file_path, commit_message, content, branch=repo.default_branch)
         print(f"Created file: {file_path}")
 
-def create_and_deploy(request_data: BuildRequest, html_content: str, binary_files: dict):
+def create_and_deploy(request_data: BuildRequest, generated_files: dict, binary_files: dict):
     g = Github(config.GITHUB_TOKEN)
     user = g.get_user()
     repo_name = request_data.task
@@ -367,8 +383,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-    # Ensure index.html and support files are created/updated
-    create_or_update_file(repo, "index.html", "Create/Update application code", html_content)
+    for filename, content in generated_files.items():
+        if not content: # Skip empty files
+            print(f"Skipping empty file: {filename}")
+            continue
+        create_or_update_file(repo, filename, f"Create/Update {filename}", str(content))
     create_or_update_file(repo, "README.md", "Create/Update README", readme_content)
     create_or_update_file(repo, "LICENSE", "Create/Update LICENSE", license_text)
 
@@ -401,7 +420,7 @@ SOFTWARE.
 
     return repo.html_url, commit_sha, pages_url
 
-def revise_and_deploy(request_data: BuildRequest, new_html_content: str, binary_files: dict):
+def revise_and_deploy(request_data: BuildRequest, generated_files: dict, binary_files: dict):
     g = Github(config.GITHUB_TOKEN)
     user = g.get_user()
     repo_name = request_data.task
@@ -415,9 +434,18 @@ def revise_and_deploy(request_data: BuildRequest, new_html_content: str, binary_
     existing_readme = readme_file.decoded_content.decode("utf-8") if readme_file else ""
     new_readme_content = f"{existing_readme}\n\n### Round {request_data.round} Update\n\n> {request_data.brief}"
 
-    create_or_update_file(repo, "index.html", f"Update webpage for Round {request_data.round}", new_html_content)
+    # === THIS IS THE CORRECTED LOOP ===
+    # It now iterates over the 'generated_files' dictionary
+    for filename, content in generated_files.items():
+        if not content:
+            print(f"Skipping empty file: {filename}")
+            continue
+        create_or_update_file(repo, filename, f"Create/Update {filename} (Round {request_data.round})", str(content))
+    
+    # Update README
     create_or_update_file(repo, "README.md", f"Update README for Round {request_data.round}", new_readme_content)
 
+    # === This part for binary_files is correct ===
     for filename, content in binary_files.items():
         safe_name = sanitize_filename(filename)
         # Detect text files by extension
@@ -458,19 +486,22 @@ def run_build_and_deploy_task(request_data: BuildRequest):
     print(f"Starting background task for '{request_data.task}', round {request_data.round}.")
     try:
         if request_data.round == 1:
-            html_content, binary_files = generate_code_from_brief(request_data)
-            repo_url, commit_sha, pages_url = create_and_deploy(request_data, html_content, binary_files)
+            # === MODIFIED LINE ===
+            generated_files, binary_files = generate_code_from_brief(request_data)
+            repo_url, commit_sha, pages_url = create_and_deploy(request_data, generated_files, binary_files)
         else:
             g = Github(config.GITHUB_TOKEN)
             user = g.get_user()
             repo = g.get_repo(f"{user.login}/{request_data.task}")
 
-            file_content = get_existing_file(repo, "index.html")
+            file_content = get_existing_file(repo, "index.html") # This will only get index.html, see note below
             if not file_content: raise ValueError("Could not retrieve existing code for revision.")
 
             existing_code = file_content.decoded_content.decode("utf-8")
-            modified_html_code, binary_files = generate_code_from_brief(request_data, existing_code)
-            repo_url, commit_sha, pages_url = revise_and_deploy(request_data, modified_html_code, binary_files)
+
+
+            generated_files, binary_files = generate_code_from_brief(request_data, existing_code)
+            repo_url, commit_sha, pages_url = revise_and_deploy(request_data, generated_files, binary_files)
 
         notification_payload = {
             "email": request_data.email, "task": request_data.task,
